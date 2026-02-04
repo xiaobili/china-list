@@ -132,7 +132,8 @@ class AdGuardConfigConverter:
             req = urllib.request.Request(
                 self.github_api_url,
                 headers={
-                    'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)'
+                    'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)',
+                    'Authorization': 'Bearer GITHUB_TOKEN'
                 }
             )
             
@@ -166,7 +167,7 @@ class AdGuardConfigConverter:
             print(f"错误: {e}")
             sys.exit(1)
             
-    def download_file_with_retry(self, base_url, filename, max_attempts=3):
+    def download_file_with_retry(self, base_url, filename, config_dir, max_attempts=3):
         """带重试机制的文件下载"""
         url = f"{base_url}{filename}"
         
@@ -181,7 +182,8 @@ class AdGuardConfigConverter:
                     }
                 )
                 
-                filepath = self.config_dir / filename
+                # 使用传入的配置目录
+                filepath = config_dir / filename
                 
                 # 如果文件存在则删除
                 if filepath.exists():
@@ -204,7 +206,7 @@ class AdGuardConfigConverter:
                     print(f"错误: 无法下载 {filename} 在 {max_attempts} 次尝试后")
                     return False
                     
-    def download_all_files(self, base_url):
+    def download_all_files(self, base_url, config_dir):
         """下载所有配置文件"""
         print("开始下载 v2ray-rules-dat 配置文件...")
         
@@ -212,7 +214,7 @@ class AdGuardConfigConverter:
         success_count = 0
         
         for filename in all_files:
-            if self.download_file_with_retry(base_url, filename):
+            if self.download_file_with_retry(base_url, filename, config_dir):
                 success_count += 1
                 
         if success_count == len(all_files):
@@ -237,10 +239,11 @@ class AdGuardConfigConverter:
             return f"[/{domain}/]{dns_str}"
         return None
         
-    def convert_file_to_adguard(self, input_filename, output_filename, dns_servers):
+    def convert_file_to_adguard(self, input_filename, output_filename, dns_servers, config_dir):
         """将整个文件转换为AdGuardHome格式"""
-        input_path = self.config_dir / input_filename
-        output_path = self.config_dir / output_filename
+        # 使用传入的配置目录
+        input_path = config_dir / input_filename
+        output_path = config_dir / output_filename
         
         try:
             with open(input_path, 'r', encoding='utf-8') as infile, \
@@ -255,7 +258,7 @@ class AdGuardConfigConverter:
                     line = line.strip()
                     
                     # 跳过空行和注释行
-                    if not line or line.startswith('#'):
+                    if not line or line.startswith('#') or line.startswith('regexp:'):
                         continue
                         
                     # 转换域名格式
@@ -268,7 +271,7 @@ class AdGuardConfigConverter:
         except Exception as e:
             print(f"错误: 转换文件 {input_filename} 时出错 - {e}")
             
-    def convert_all_files(self):
+    def convert_all_files(self, config_dir):
         """转换所有配置文件"""
         print("开始转换配置文件为 AdGuardHome 兼容格式...")
         
@@ -276,17 +279,17 @@ class AdGuardConfigConverter:
         for filename in self.domestic_files:
             output_filename = filename.replace('.txt', '.adg.txt')
             print(f"转换 {filename} -> {output_filename} (使用国内DNS: {' '.join(self.domestic_dns)})")
-            self.convert_file_to_adguard(filename, output_filename, self.domestic_dns)
+            self.convert_file_to_adguard(filename, output_filename, self.domestic_dns, config_dir)
             
         # 转换国外文件
         for filename in self.foreign_files:
             output_filename = filename.replace('.txt', '.adg.txt')
             print(f"转换 {filename} -> {output_filename} (使用国外DNS: {' '.join(self.foreign_dns)})")
-            self.convert_file_to_adguard(filename, output_filename, self.foreign_dns)
+            self.convert_file_to_adguard(filename, output_filename, self.foreign_dns, config_dir)
             
         print("转换完成！")
         
-    def create_merged_config(self):
+    def create_merged_config(self, config_dir):
         """创建合并后的配置文件"""
         print(f"创建合并后的配置文件到: {self.output_filename}")
         
@@ -318,7 +321,8 @@ class AdGuardConfigConverter:
                 domestic_count = 0
                 for filename in self.domestic_files:
                     adg_filename = filename.replace('.txt', '.adg.txt')
-                    adg_path = self.config_dir / adg_filename
+                    # 使用传入的配置目录
+                    adg_path = config_dir / adg_filename
                     
                     if adg_path.exists():
                         outfile.write(f"# 来源: {filename}\n")
@@ -339,7 +343,8 @@ class AdGuardConfigConverter:
                 foreign_count = 0
                 for filename in self.foreign_files:
                     adg_filename = filename.replace('.txt', '.adg.txt')
-                    adg_path = self.config_dir / adg_filename
+                    # 使用传入的配置目录
+                    adg_path = config_dir / adg_filename
                     
                     if adg_path.exists():
                         outfile.write(f"# 来源: {filename}\n")
@@ -398,24 +403,22 @@ class AdGuardConfigConverter:
             # 创建配置目录
             self.create_config_directory()
             
-            # 进入配置目录
-            os.chdir(self.config_dir)
+            # 获取配置目录的绝对路径
+            config_dir_abs = self.config_dir.absolute()
+            print(f"配置目录路径: {config_dir_abs}")
             
             # 获取最新release信息
             base_url = self.get_latest_release_info()
             
-            # 下载所有文件
-            if not self.download_all_files(base_url):
+            # 下载所有文件到配置目录
+            if not self.download_all_files(base_url, config_dir_abs):
                 print("警告: 部分文件下载失败，但仍继续处理已下载的文件")
             
             # 转换所有文件
-            self.convert_all_files()
-            
-            # 返回上级目录
-            os.chdir('..')
+            self.convert_all_files(config_dir_abs)
             
             # 创建合并配置文件
-            self.create_merged_config()
+            self.create_merged_config(config_dir_abs)
             
             # 显示摘要
             self.show_summary()
@@ -425,6 +428,8 @@ class AdGuardConfigConverter:
             sys.exit(1)
         except Exception as e:
             print(f"发生未预期的错误: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
 
 
