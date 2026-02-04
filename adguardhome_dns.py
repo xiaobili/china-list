@@ -10,6 +10,7 @@ AdGuard Home DNS 配置转换器
 - 支持国内外域名分别配置DNS服务器
 - 智能格式转换
 - 自动生成合并配置文件
+- 支持分层目录结构（configs子目录存放原始和转换文件，根目录存放合并文件）
 """
 
 import argparse
@@ -27,7 +28,8 @@ class AdGuardConfigConverter:
     """AdGuard Home 配置转换器主类"""
     
     def __init__(self):
-        self.config_dir = Path("china-list-config")
+        self.output_dir = Path(".")  # 默认当前目录
+        self.configs_subdir = "configs"  # configs子目录名称
         self.github_api_url = "https://api.github.com/repos/Loyalsoldier/v2ray-rules-dat/releases/latest"
         self.output_filename = "chinalist-for-adguard.txt"
         
@@ -52,21 +54,27 @@ class AdGuardConfigConverter:
     def show_usage(self):
         """显示使用方法"""
         usage_text = """
-用法: python3 adguardhome_dns.py [国内DNS服务器...] [--foreign 国外DNS服务器...]
+用法: python3 adguardhome_dns.py [国内DNS服务器...] [--foreign 国外DNS服务器...] [--output 输出目录]
 
 参数说明:
   国内DNS服务器    用于国内域名解析的DNS服务器地址（可指定多个）
   --foreign        分隔符，后面跟国外DNS服务器地址
   国外DNS服务器    用于国外域名解析的DNS服务器地址（可指定多个）
+  --output         指定输出根目录（默认为当前目录）
+                  原始文件和转换文件保存在 {output_dir}/configs/ 目录中
+                  合并文件保存在 {output_dir}/ 目录中
 
 示例:
   python3 adguardhome_dns.py 114.114.114.114                          # 只指定国内DNS（国外使用相同DNS）
   python3 adguardhome_dns.py 114.114.114.114 --foreign 8.8.8.8       # 分别指定国内外DNS
   python3 adguardhome_dns.py 114.114.114.114 223.5.5.5 --foreign 8.8.8.8 1.1.1.1
+  python3 adguardhome_dns.py --output /path/to/output/dir            # 指定输出根目录
+  python3 adguardhome_dns.py 114.114.114.114 --output ./configs      # 同时指定DNS和输出目录
 
 默认值:
   国内DNS: 114.114.114.114
   国外DNS: 8.8.8.8
+  输出根目录: 当前工作目录
         """
         print(usage_text)
         
@@ -80,6 +88,8 @@ class AdGuardConfigConverter:
   python3 adguardhome_dns.py 114.114.114.114
   python3 adguardhome_dns.py 114.114.114.114 --foreign 8.8.8.8
   python3 adguardhome_dns.py 114.114.114.114 223.5.5.5 --foreign 8.8.8.8 1.1.1.1
+  python3 adguardhome_dns.py --output /custom/output/path
+  python3 adguardhome_dns.py 114.114.114.114 --output ./my-configs
             """,
             add_help=False  # 禁用默认的帮助选项
         )
@@ -95,6 +105,13 @@ class AdGuardConfigConverter:
             nargs='*',
             dest='foreign_dns',
             help='国外DNS服务器地址'
+        )
+        
+        parser.add_argument(
+            '--output', '-o',
+            dest='output_dir',
+            default='.',
+            help='输出根目录（默认为当前目录）'
         )
         
         parser.add_argument(
@@ -114,31 +131,44 @@ class AdGuardConfigConverter:
         self.domestic_dns = args.domestic_dns if args.domestic_dns else self.default_domestic_dns
         self.foreign_dns = args.foreign_dns if args.foreign_dns else self.default_foreign_dns
         
+        # 设置输出根目录
+        self.output_dir = Path(args.output_dir).resolve()
+        
         print("配置信息:")
         print(f"  国内DNS服务器: {' '.join(self.domestic_dns)}")
         print(f"  国外DNS服务器: {' '.join(self.foreign_dns)}")
+        print(f"  输出根目录: {self.output_dir}")
+        print(f"  configs子目录: {self.output_dir / self.configs_subdir}")
         print()
         
-    def create_config_directory(self):
-        """创建配置目录"""
-        if not self.config_dir.exists():
-            print(f"创建目录: {self.config_dir}")
-            self.config_dir.mkdir(parents=True)
+    def create_directories(self):
+        """创建必要的目录结构"""
+        # 创建输出根目录
+        if not self.output_dir.exists():
+            print(f"创建输出根目录: {self.output_dir}")
+            self.output_dir.mkdir(parents=True)
             
+        # 创建configs子目录
+        configs_dir = self.output_dir / self.configs_subdir
+        if not configs_dir.exists():
+            print(f"创建configs子目录: {configs_dir}")
+            configs_dir.mkdir(parents=True)
+
+
+    def get_token(self):
+        """从token文件获取GitHub API令牌""" 
+        token_path = self.output_dir / "token"
+        token_file = Path(token_path)
+        try:
+            with token_file.open('r') as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            print("警告: 未找到 token 文件，使用默认令牌可能会受限")
+            return None
     def get_latest_release_info(self):
         """获取最新release信息"""
         print("获取最新 release 信息...")
-        # 从 token 文件中读取GitHub token
-        token_file = Path("token")
-        token = None
-        if token_file.exists():
-            with token_file.open('r') as f:
-                token = f.read().strip()
-                if not token:
-                    print("错误: token.txt 文件为空")
-                    sys.exit(1)
-        else:
-            print("警告: 未找到 token.txt 文件，可能会受到 GitHub API 速率限制")
+        token = self.get_token()
         try:
             req = urllib.request.Request(
                 self.github_api_url,
@@ -178,10 +208,10 @@ class AdGuardConfigConverter:
             print(f"错误: {e}")
             sys.exit(1)
             
-    def download_file_with_retry(self, base_url, filename, config_dir, max_attempts=3):
+    def download_file_with_retry(self, base_url, filename, configs_dir, max_attempts=3):
         """带重试机制的文件下载"""
         url = f"{base_url}{filename}"
-        
+        token = self.get_token()
         for attempt in range(1, max_attempts + 1):
             try:
                 print(f"下载 {filename} (尝试 {attempt}/{max_attempts})...")
@@ -189,12 +219,13 @@ class AdGuardConfigConverter:
                 req = urllib.request.Request(
                     url,
                     headers={
-                        'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)'
+                        'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)',
+                        'Authorization': f'Bearer {token}' if token else 'Bearer GITHUB_TOKEN'
                     }
                 )
                 
-                # 使用传入的配置目录
-                filepath = config_dir / filename
+                # 使用configs子目录保存文件
+                filepath = configs_dir / filename
                 
                 # 如果文件存在则删除
                 if filepath.exists():
@@ -217,15 +248,15 @@ class AdGuardConfigConverter:
                     print(f"错误: 无法下载 {filename} 在 {max_attempts} 次尝试后")
                     return False
                     
-    def download_all_files(self, base_url, config_dir):
-        """下载所有配置文件"""
+    def download_all_files(self, base_url, configs_dir):
+        """下载所有配置文件到configs子目录"""
         print("开始下载 v2ray-rules-dat 配置文件...")
         
         all_files = self.domestic_files + self.foreign_files
         success_count = 0
         
         for filename in all_files:
-            if self.download_file_with_retry(base_url, filename, config_dir):
+            if self.download_file_with_retry(base_url, filename, configs_dir):
                 success_count += 1
                 
         if success_count == len(all_files):
@@ -250,11 +281,11 @@ class AdGuardConfigConverter:
             return f"[/{domain}/]{dns_str}"
         return None
         
-    def convert_file_to_adguard(self, input_filename, output_filename, dns_servers, config_dir):
+    def convert_file_to_adguard(self, input_filename, output_filename, dns_servers, configs_dir):
         """将整个文件转换为AdGuardHome格式"""
-        # 使用传入的配置目录
-        input_path = config_dir / input_filename
-        output_path = config_dir / output_filename
+        # 使用configs子目录
+        input_path = configs_dir / input_filename
+        output_path = configs_dir / output_filename
         
         try:
             with open(input_path, 'r', encoding='utf-8') as infile, \
@@ -282,7 +313,7 @@ class AdGuardConfigConverter:
         except Exception as e:
             print(f"错误: 转换文件 {input_filename} 时出错 - {e}")
             
-    def convert_all_files(self, config_dir):
+    def convert_all_files(self, configs_dir):
         """转换所有配置文件"""
         print("开始转换配置文件为 AdGuardHome 兼容格式...")
         
@@ -290,22 +321,22 @@ class AdGuardConfigConverter:
         for filename in self.domestic_files:
             output_filename = filename.replace('.txt', '.adg.txt')
             print(f"转换 {filename} -> {output_filename} (使用国内DNS: {' '.join(self.domestic_dns)})")
-            self.convert_file_to_adguard(filename, output_filename, self.domestic_dns, config_dir)
+            self.convert_file_to_adguard(filename, output_filename, self.domestic_dns, configs_dir)
             
         # 转换国外文件
         for filename in self.foreign_files:
             output_filename = filename.replace('.txt', '.adg.txt')
             print(f"转换 {filename} -> {output_filename} (使用国外DNS: {' '.join(self.foreign_dns)})")
-            self.convert_file_to_adguard(filename, output_filename, self.foreign_dns, config_dir)
+            self.convert_file_to_adguard(filename, output_filename, self.foreign_dns, configs_dir)
             
         print("转换完成！")
         
-    def create_merged_config(self, config_dir):
-        """创建合并后的配置文件"""
-        print(f"创建合并后的配置文件到: {self.output_filename}")
+    def create_merged_config(self, configs_dir, output_dir):
+        """创建合并后的配置文件到输出根目录"""
+        print(f"创建合并后的配置文件到: {output_dir / self.output_filename}")
         
         # 删除旧文件
-        output_path = Path(self.output_filename)
+        output_path = output_dir / self.output_filename
         if output_path.exists():
             print(f"删除旧的合并文件: {self.output_filename}")
             output_path.unlink()
@@ -332,8 +363,8 @@ class AdGuardConfigConverter:
                 domestic_count = 0
                 for filename in self.domestic_files:
                     adg_filename = filename.replace('.txt', '.adg.txt')
-                    # 使用传入的配置目录
-                    adg_path = config_dir / adg_filename
+                    # 使用configs子目录读取转换后的文件
+                    adg_path = configs_dir / adg_filename
                     
                     if adg_path.exists():
                         outfile.write(f"# 来源: {filename}\n")
@@ -354,8 +385,8 @@ class AdGuardConfigConverter:
                 foreign_count = 0
                 for filename in self.foreign_files:
                     adg_filename = filename.replace('.txt', '.adg.txt')
-                    # 使用传入的配置目录
-                    adg_path = config_dir / adg_filename
+                    # 使用configs子目录读取转换后的文件
+                    adg_path = configs_dir / adg_filename
                     
                     if adg_path.exists():
                         outfile.write(f"# 来源: {filename}\n")
@@ -380,13 +411,32 @@ class AdGuardConfigConverter:
             
     def show_summary(self):
         """显示执行摘要"""
-        print("\n所有操作已完成！")
-        print("\n输出文件列表：")
+        configs_dir = self.output_dir / self.configs_subdir
         
+        print("\n所有操作已完成！")
+        print("\n目录结构:")
+        print(f"输出根目录: {self.output_dir}")
+        print(f"configs子目录: {configs_dir}")
+        
+        print("\nconfigs子目录中的文件:")
+        # 显示原始文件
         for filename in self.domestic_files + self.foreign_files:
-            print(f"- {filename} (原始文件)")
-            print(f"- {filename.replace('.txt', '.adg.txt')} (转换后文件)")
-        print(f"- {self.output_filename} (合并后的最终文件)")
+            file_path = configs_dir / filename
+            status = "✓" if file_path.exists() else "✗"
+            print(f"- {filename} {status}")
+        
+        # 显示转换后文件
+        for filename in self.domestic_files + self.foreign_files:
+            adg_filename = filename.replace('.txt', '.adg.txt')
+            file_path = configs_dir / adg_filename
+            status = "✓" if file_path.exists() else "✗"
+            print(f"- {adg_filename} {status}")
+        
+        print(f"\n输出根目录中的文件:")
+        # 显示合并文件
+        merged_path = self.output_dir / self.output_filename
+        status = "✓" if merged_path.exists() else "✗"
+        print(f"- {self.output_filename} {status}")
         
         print("\n配置摘要：")
         print(f"- 国内域名使用DNS: {' '.join(self.domestic_dns)}")
@@ -394,10 +444,9 @@ class AdGuardConfigConverter:
         
         # 显示合并文件预览
         try:
-            output_path = Path(self.output_filename)
-            if output_path.exists():
+            if merged_path.exists():
                 print(f"\n合并后文件的前15行预览：")
-                with open(output_path, 'r', encoding='utf-8') as f:
+                with open(merged_path, 'r', encoding='utf-8') as f:
                     for i, line in enumerate(f):
                         if i >= 15:
                             break
@@ -411,25 +460,27 @@ class AdGuardConfigConverter:
             # 解析参数
             self.parse_arguments()
             
-            # 创建配置目录
-            self.create_config_directory()
+            # 创建目录结构
+            self.create_directories()
             
-            # 获取配置目录的绝对路径
-            config_dir_abs = self.config_dir.absolute()
-            print(f"配置目录路径: {config_dir_abs}")
+            # 获取目录的绝对路径
+            output_dir_abs = self.output_dir.absolute()
+            configs_dir_abs = (self.output_dir / self.configs_subdir).absolute()
+            print(f"输出根目录路径: {output_dir_abs}")
+            print(f"configs子目录路径: {configs_dir_abs}")
             
             # 获取最新release信息
             base_url = self.get_latest_release_info()
             
-            # 下载所有文件到配置目录
-            if not self.download_all_files(base_url, config_dir_abs):
+            # 下载所有文件到configs子目录
+            if not self.download_all_files(base_url, configs_dir_abs):
                 print("警告: 部分文件下载失败，但仍继续处理已下载的文件")
             
             # 转换所有文件
-            self.convert_all_files(config_dir_abs)
+            self.convert_all_files(configs_dir_abs)
             
-            # 创建合并配置文件
-            self.create_merged_config(config_dir_abs)
+            # 创建合并配置文件到输出根目录
+            self.create_merged_config(configs_dir_abs, output_dir_abs)
             
             # 显示摘要
             self.show_summary()

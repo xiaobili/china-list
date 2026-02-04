@@ -11,6 +11,7 @@
 - 📝 **格式转换**: 将纯域名列表自动转换为 AdGuard Home 兼容格式
 - 🛡️ **安全保障**: 自动添加推荐的安全DNS上游服务器
 - ♻️ **智能去重**: 自动去除重复域名配置，避免冲突
+- 📁 **分层目录**: 采用清晰的目录结构组织文件
 
 ## 脚本版本
 
@@ -23,6 +24,7 @@
 - 更详细的进度反馈
 - 支持更多自定义选项
 - **新增**: 智能去重功能，避免重复域名配置
+- **新增**: 分层目录结构，便于文件管理
 
 ### Shell版本 (传统)
 文件: `dnsmasq_to_adg.sh`
@@ -36,11 +38,34 @@
 
 1. 从 [Loyalsoldier/v2ray-rules-dat](https://github.com/Loyalsoldier/v2ray-rules-dat) 获取最新release
 2. 下载国内域名列表：`apple-cn.txt`, `google-cn.txt`, `china-list.txt`
-3. 下载国外代理域名列表：`proxy.txt`
+3. 下载国外代理域名列表：`proxy-list.txt`, `gfw.txt`, `greatfire.txt`
 4. 将纯域名格式转换为 AdGuard Home 的 `[/domain/]dns_server` 格式
 5. 支持为国内外域名分别配置不同的DNS服务器
 6. **智能去重**: 自动检测并去除重复的域名配置
 7. 合并所有配置文件并添加推荐的上游DNS服务器
+8. **分层输出**: 原始和转换文件保存在 `configs/` 子目录，合并文件保存在根目录
+
+## 目录结构
+
+执行脚本后会生成以下目录结构：
+
+```
+[指定的输出目录]/
+├── chinalist-for-adguard.txt     # 最终合并的AdGuard Home配置文件（已去重）
+└── configs/                      # 原始文件和转换文件存放目录
+    ├── apple-cn.txt              # Apple国内域名原始列表
+    ├── google-cn.txt             # Google国内域名原始列表
+    ├── china-list.txt            # 通用国内域名原始列表
+    ├── proxy-list.txt            # 国外代理域名原始列表
+    ├── gfw.txt                   # GFW列表原始文件
+    ├── greatfire.txt             # GreatFire列表原始文件
+    ├── apple-cn.adg.txt          # Apple国内域名AdGuard格式
+    ├── google-cn.adg.txt         # Google国内域名AdGuard格式
+    ├── china-list.adg.txt        # 通用国内域名AdGuard格式
+    ├── proxy-list.adg.txt        # 国外代理域名AdGuard格式
+    ├── gfw.adg.txt               # GFW列表AdGuard格式
+    └── greatfire.adg.txt         # GreatFire列表AdGuard格式
+```
 
 ## 去重功能说明
 
@@ -72,7 +97,7 @@
 ### Python版本使用 (推荐)
 
 ```bash
-# 使用默认DNS服务器配置
+# 使用默认DNS服务器配置和默认输出目录
 python3 adguardhome_dns.py
 
 # 指定统一的DNS服务器（国内外都使用相同DNS）
@@ -89,6 +114,15 @@ python3 adguardhome_dns.py 114.114.114.114 223.5.5.5 --foreign 8.8.8.8 1.1.1.1
 
 # 只指定国外DNS（国内使用默认）
 python3 adguardhome_dns.py --foreign 8.8.8.8
+
+# 指定自定义输出目录
+python3 adguardhome_dns.py --output /path/to/my/configs
+
+# 同时指定DNS服务器和输出目录
+python3 adguardhome_dns.py 114.114.114.114 --output ./my-adguard-configs
+
+# 完整示例：指定DNS服务器和自定义输出目录
+python3 adguardhome_dns.py 114.114.114.114 223.5.5.5 --foreign 8.8.8.8 1.1.1.1 --output /home/user/adguard-configs
 
 # 查看帮助
 python3 adguardhome_dns.py --help
@@ -119,18 +153,6 @@ python3 adguardhome_dns.py --help
 ./dnsmasq_to_adg.sh --help
 ```
 
-### 输出文件
-
-脚本执行后会在当前目录下生成以下文件：
-
-- `china-list-config/`: 配置文件存储目录
-  - `apple-cn.txt`: 原始Apple国内域名列表
-  - `google-cn.txt`: 原始Google国内域名列表  
-  - `china-list.txt`: 原始通用国内域名列表
-  - `proxy.txt`: 原始国外代理域名列表
-  - `*.adg.txt`: 转换后的各分类配置文件
-- `chinalist-for-adguard.txt`: 最终合并的AdGuard Home配置文件（已去重）
-
 ## 配置示例
 
 生成的 `chinalist-for-adguard.txt` 文件格式如下：
@@ -153,7 +175,7 @@ tls://one.one.one.one
 ...
 
 # === 国外域名配置 (使用DNS: 8.8.8.8 1.1.1.1) ===
-# 来源: proxy.txt
+# 来源: proxy-list.txt
 [/google.com/]8.8.8.8 1.1.1.1
 [/facebook.com/]8.8.8.8 1.1.1.1
 ...
@@ -161,11 +183,12 @@ tls://one.one.one.one
 
 ## 参数说明
 
-| 参数格式 | 说明 | 示例 |
-|---------|------|------|
-| `[DNS...]` | 国内DNS服务器地址（可多个） | `./dnsmasq_to_adg.sh 114.114.114.114` |
-| `--foreign` | 分隔符，标识国外DNS配置开始 | `./dnsmasq_to_adg.sh --foreign 8.8.8.8` |
-| `[DNS...] --foreign [DNS...]` | 分别指定国内外DNS | `./dnsmasq_to_adg.sh 114.114.114.114 --foreign 8.8.8.8` |
+| 参数格式                      | 说明                        | 示例                                                    |
+| ----------------------------- | --------------------------- | ------------------------------------------------------- |
+| `[DNS...]`                    | 国内DNS服务器地址（可多个） | `./dnsmasq_to_adg.sh 114.114.114.114`                   |
+| `--foreign`                   | 分隔符，标识国外DNS配置开始 | `./dnsmasq_to_adg.sh --foreign 8.8.8.8`                 |
+| `[DNS...] --foreign [DNS...]` | 分别指定国内外DNS           | `./dnsmasq_to_adg.sh 114.114.114.114 --foreign 8.8.8.8` |
+| `--output, -o`                | 指定输出根目录              | `./adguardhome_dns.py --output /my/configs`             |
 
 ## 默认配置
 
@@ -173,6 +196,7 @@ tls://one.one.one.one
 
 - **国内DNS服务器**: `114.114.114.114`
 - **国外DNS服务器**: `8.8.8.8`
+- **输出根目录**: 当前工作目录
 
 ## 推荐的上游DNS服务器
 
@@ -200,6 +224,7 @@ tls://one.one.one.one
 - 国内域名使用指定的第一组DNS服务器解析
 - 国外域名使用指定的第二组DNS服务器解析
 - **新增**: 脚本会自动去除重复域名配置，避免冲突
+- **新增**: 采用分层目录结构，便于文件组织和管理
 - 建议定期运行以获取最新的域名列表更新
 - 转换过程保留原有注释信息，便于追溯
 
@@ -219,16 +244,29 @@ tls://one.one.one.one
 ### 文件权限问题
 - 确保有写入当前目录的权限
 - 检查磁盘空间是否充足
+- 确保输出目录具有写入权限
 
 ## 版本历史
 
-### v3.1.0 (当前版本)
-- ✨ 新增智能去重功能
+### v3.3.0 (当前版本)
+- ✨ **重要变更**: 实现分层目录结构
+- ✨ 原始文件和转换文件保存在 `configs/` 子目录
+- ✨ 最终合并文件保存在输出根目录
+- ✨ 改进文件组织，使目录结构更加清晰
+
+### v3.2.1
+- ✨ 所有文件保存到统一的输出目录中
+
+### v3.2.0
+- ✨ 添加自定义输出目录功能 (`--output` 参数)
+
+### v3.1.0
+- ✨ 添加智能去重功能
 - ✨ 在合并文件中显示去重统计信息
 - ✨ 优化域名处理逻辑
 
 ### v3.0.0
-- ✨ 新增Python版本脚本 (`adguardhome_dns.py`)
+- ✨ 添加Python版本脚本 (`adguardhome_dns.py`)
 - ✨ 改进的错误处理和用户反馈
 - ✨ 更好的跨平台兼容性
 - ✨ 支持更详细的日志输出
