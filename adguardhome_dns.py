@@ -128,12 +128,23 @@ class AdGuardConfigConverter:
     def get_latest_release_info(self):
         """获取最新release信息"""
         print("获取最新 release 信息...")
+        # 从 token 文件中读取GitHub token
+        token_file = Path("token")
+        token = None
+        if token_file.exists():
+            with token_file.open('r') as f:
+                token = f.read().strip()
+                if not token:
+                    print("错误: token.txt 文件为空")
+                    sys.exit(1)
+        else:
+            print("警告: 未找到 token.txt 文件，可能会受到 GitHub API 速率限制")
         try:
             req = urllib.request.Request(
                 self.github_api_url,
                 headers={
                     'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)',
-                    'Authorization': 'Bearer GITHUB_TOKEN'
+                    'Authorization': f'Bearer {token}' if token else 'Bearer GITHUB_TOKEN'
                 }
             )
             
