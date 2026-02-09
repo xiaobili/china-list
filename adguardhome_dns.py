@@ -31,6 +31,7 @@ class AdGuardConfigConverter:
         self.output_dir = Path(".")  # 默认当前目录
         self.configs_subdir = "configs"  # configs子目录名称
         self.github_api_url = "https://api.github.com/repos/Loyalsoldier/v2ray-rules-dat/releases/latest"
+        self.jsdelivr_base_url = "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/"
         self.output_filename = "chinalist-for-adguard.txt"
         
         # 国内分组文件
@@ -166,7 +167,7 @@ class AdGuardConfigConverter:
             print("警告: 未找到 token 文件，使用默认令牌可能会受限")
             return None
     def get_latest_release_info(self):
-        """获取最新release信息"""
+        """获取最新release信息，失败时返回None表示使用备用CDN"""
         print("获取最新 release 信息...")
         token = self.get_token()
         try:
@@ -177,76 +178,92 @@ class AdGuardConfigConverter:
                     'Authorization': f'Bearer {token}' if token else 'Bearer GITHUB_TOKEN'
                 }
             )
-            
+
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode())
-                
+
             # 提取下载URL的基础部分
             assets = data.get('assets', [])
             if not assets:
                 raise Exception("未找到下载资源")
-                
+
             # 找到第一个浏览器下载URL作为基准
             browser_url = None
             for asset in assets:
                 if 'browser_download_url' in asset:
                     browser_url = asset['browser_download_url']
                     break
-                    
+
             if not browser_url:
                 raise Exception("未找到有效的下载URL")
-                
+
             base_url = '/'.join(browser_url.split('/')[:-1]) + '/'
             print(f"下载基础URL: {base_url}")
-            
+
             return base_url
-            
+
         except urllib.error.URLError as e:
-            print(f"错误: 无法获取 GitHub release 信息 - {e}")
-            sys.exit(1)
+            print(f"警告: 无法获取 GitHub release 信息 - {e}")
+            print("将使用 jsdelivr CDN 作为备用下载源")
+            return None
         except Exception as e:
-            print(f"错误: {e}")
-            sys.exit(1)
+            print(f"警告: 获取 release 信息失败 - {e}")
+            print("将使用 jsdelivr CDN 作为备用下载源")
+            return None
             
     def download_file_with_retry(self, base_url, filename, configs_dir, max_attempts=3):
-        """带重试机制的文件下载"""
-        url = f"{base_url}{filename}"
+        """带重试机制的文件下载，支持主备CDN切换"""
+        # 定义备用CDN列表
+        # 如果 base_url 为 None，则跳过 GitHub，直接使用 jsdelivr
+        cdn_urls = []
+        if base_url is not None:
+            cdn_urls.append(("GitHub", f"{base_url}{filename}"))
+        cdn_urls.append(("jsdelivr CDN", f"{self.jsdelivr_base_url}{filename}"))
+
         token = self.get_token()
-        for attempt in range(1, max_attempts + 1):
-            try:
-                print(f"下载 {filename} (尝试 {attempt}/{max_attempts})...")
-                
-                req = urllib.request.Request(
-                    url,
-                    headers={
-                        'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)',
-                        'Authorization': f'Bearer {token}' if token else 'Bearer GITHUB_TOKEN'
+
+        for cdn_name, url in cdn_urls:
+            is_primary = (cdn_name == "GitHub")
+
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    print(f"下载 {filename} 从 {cdn_name} (尝试 {attempt}/{max_attempts})...")
+
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (compatible; AdGuardConfigConverter/1.0)'
                     }
-                )
-                
-                # 使用configs子目录保存文件
-                filepath = configs_dir / filename
-                
-                # 如果文件存在则删除
-                if filepath.exists():
-                    print(f"删除已存在的文件: {filename}")
-                    filepath.unlink()
-                    
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    with open(filepath, 'wb') as f:
-                        f.write(response.read())
-                        
-                print(f"成功下载 {filename}")
-                return True
-                
-            except Exception as e:
-                print(f"下载失败: {e}")
-                if attempt < max_attempts:
-                    print("正在重试...")
-                    time.sleep(2)
-                else:
-                    print(f"错误: 无法下载 {filename} 在 {max_attempts} 次尝试后")
-                    return False
+                    # 只有GitHub主链接需要token
+                    if is_primary and token:
+                        headers['Authorization'] = f'Bearer {token}'
+
+                    req = urllib.request.Request(url, headers=headers)
+
+                    # 使用configs子目录保存文件
+                    filepath = configs_dir / filename
+
+                    # 如果文件存在则删除
+                    if filepath.exists():
+                        print(f"删除已存在的文件: {filename}")
+                        filepath.unlink()
+
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        with open(filepath, 'wb') as f:
+                            f.write(response.read())
+
+                    print(f"成功下载 {filename} 从 {cdn_name}")
+                    return True
+
+                except Exception as e:
+                    print(f"从 {cdn_name} 下载失败: {e}")
+                    if attempt < max_attempts:
+                        print("正在重试...")
+                        time.sleep(2)
+                    else:
+                        print(f"从 {cdn_name} 下载 {filename} 失败，尝试下一个CDN...")
+                        break  # 切换到下一个CDN
+
+        print(f"错误: 无法下载 {filename}，所有CDN均已尝试")
+        return False
                     
     def download_all_files(self, base_url, configs_dir):
         """下载所有配置文件到configs子目录"""
@@ -353,6 +370,10 @@ class AdGuardConfigConverter:
                 
                 # 推荐的上游安全DNS服务器
                 outfile.write("# 推荐的上游安全DNS服务器\n")
+                outfile.write("tcp://223.5.5.5\n")
+                outfile.write("tcp://119.29.29.29\n")
+                outfile.write("tcp://1.1.1.1\n")
+                outfile.write("tcp://8.8.8.8\n")
                 outfile.write("tls://dns.alidns.com\n")
                 outfile.write("tls://dot.pub\n")
                 outfile.write("tls://dns.google\n")
