@@ -1,0 +1,91 @@
+name: Update ChinaList for AdGuard
+
+on:
+  schedule:
+    # 每天 UTC 02:00 运行 (北京时间 10:00)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      domestic_dns:
+        description: '国内DNS服务器 (空格分隔)'
+        required: false
+        default: 'tls://dns.alidns.com tls://dot.pub'
+      foreign_dns:
+        description: '国外DNS服务器 (空格分隔)'
+        required: false
+        default: 'tls://one.one.one.one tls://dns.google'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Run conversion script
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # 设置DNS参数
+        DOMESTIC_DNS="${{ github.event.inputs.domestic_dns || '114.114.114.114 223.5.5.5' }}"
+        FOREIGN_DNS="${{ github.event.inputs.foreign_dns || '8.8.8.8 1.1.1.1' }}"
+
+        echo "使用国内DNS: $DOMESTIC_DNS"
+        echo "使用国外DNS: $FOREIGN_DNS"
+
+        # 运行转换脚本
+        python3 adguardhome_dns.py $DOMESTIC_DNS --foreign $FOREIGN_DNS --output .
+
+    - name: Get version info
+      id: version
+      run: |
+        VERSION=$(date +'%Y.%m.%d')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        name: ChinaList for AdGuard ${{ steps.version.outputs.date }}
+        body: |
+          ## ChinaList for AdGuard Home
+
+          **生成时间:** ${{ steps.version.outputs.date }}
+
+          **DNS 配置:**
+          - 国内DNS: ${{ github.event.inputs.domestic_dns || '114.114.114.114 223.5.5.5' }}
+          - 国外DNS: ${{ github.event.inputs.foreign_dns || '8.8.8.8 1.1.1.1' }}
+
+          ### 文件说明
+          - `chinalist-for-adguard.txt` - 合并后的 AdGuard Home 配置文件
+          - `configs/` - 原始文件和转换后的文件
+
+          ### 使用方法
+          将 `chinalist-for-adguard.txt` 内容复制到 AdGuard Home 的 "上游 DNS 服务器" 配置中。
+        files: |
+          chinalist-for-adguard.txt
+          configs/**
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Summary
+      run: |
+        echo "## Workflow Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ 已创建 Release: v${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**DNS配置:**" >> $GITHUB_STEP_SUMMARY
+        echo "- 国内DNS: ${{ github.event.inputs.domestic_dns || '114.114.114.114 223.5.5.5' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- 国外DNS: ${{ github.event.inputs.foreign_dns || '8.8.8.8 1.1.1.1' }}" >> $GITHUB_STEP_SUMMARY
